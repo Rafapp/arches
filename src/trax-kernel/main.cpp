@@ -1,106 +1,75 @@
 #include "stdafx.hpp"
 #include "include.hpp"
-#include "custom-instr.hpp"
 #include "intersect.hpp"
+#include "custom-instr.hpp"
 
-inline uint pack_color_rgb(const rtm::vec3& c)
+inline static uint32_t encode_pixel(rtm::vec3 in)
 {
-	// clamp to [0,1] first, otherwise HDR values wrap around
-	float r = c.x < 0.0f ? 0.0f : (c.x > 1.0f ? 1.0f : c.x);
-	float g = c.y < 0.0f ? 0.0f : (c.y > 1.0f ? 1.0f : c.y);
-	float b = c.z < 0.0f ? 0.0f : (c.z > 1.0f ? 1.0f : c.z);
-
-	uint R = (uint)(r * 255.0f + 0.5f);
-	uint G = (uint)(g * 255.0f + 0.5f);
-	uint B = (uint)(b * 255.0f + 0.5f);
-
-	return 0xff000000u | (B << 16) | (G << 8) | R;
+	in = rtm::clamp(in, 0.0f, 1.0f);
+	uint32_t out = 0u;
+	out |= static_cast<uint32_t>(in.r * 255.0f + 0.5f) << 0;
+	out |= static_cast<uint32_t>(in.g * 255.0f + 0.5f) << 8;
+	out |= static_cast<uint32_t>(in.b * 255.0f + 0.5f) << 16;
+	out |= 0xff << 24;
+	return out;
 }
 
-inline uint pack_color_rgba(const rtm::vec4& c)
+int main(void)
 {
-	// Clamp to [0,1] first, otherwise HDR values wrap around
-	float r = c.x < 0.0f ? 0.0f : (c.x > 1.0f ? 1.0f : c.x);
-	float g = c.y < 0.0f ? 0.0f : (c.y > 1.0f ? 1.0f : c.y);
-	float b = c.z < 0.0f ? 0.0f : (c.z > 1.0f ? 1.0f : c.z);
-
-	uint R = (uint)(r * 255.0f + 0.5f);
-	uint G = (uint)(g * 255.0f + 0.5f);
-	uint B = (uint)(b * 255.0f + 0.5f);
-
-	return 0xff000000u | (B << 16) | (G << 8) | R;
-}
-
-int main()
-{
-	const TRaXKernelArgs args = *(TRaXKernelArgs*)(TRAX_KERNEL_ARGS_ADDRESS);
-
-	const uint TILE_WIDTH  = 8;
-	const uint TILE_HEIGHT = 4;
-	const uint TILE_SIZE   = TILE_WIDTH * TILE_HEIGHT;
+	const uint SPP       = 1;
+	const uint TILE_X    = 4;
+	const uint TILE_Y    = 8;
+	const uint TILE_SIZE = TILE_X * TILE_Y;
 	static_assert(TILE_SIZE == 32);
 
-	const uint fb_width  = args.framebuffer_width;
-	const uint fb_height = args.framebuffer_height;
-
-	for (uint tid = fchthrd(); tid < args.framebuffer_size; tid = fchthrd())
+	TRaXKernelArgs args = *(TRaXKernelArgs*)(void*)(TRAX_KERNEL_ARGS_ADDRESS);
+	for(uint index = fchthrd(); index < args.framebuffer_size; index = fchthrd())
 	{
-		uint tile_id = tid / TILE_SIZE;		
-		uint toffset = tid % TILE_SIZE;
+		uint tile_id = index / TILE_SIZE;
+		uint toffset = index % TILE_SIZE;
+		uint tile_x  = tile_id % (args.framebuffer_width / TILE_X);
+		uint tile_y  = tile_id / (args.framebuffer_width / TILE_X);
+		uint x       = tile_x * TILE_X + toffset % TILE_X;
+		uint y       = tile_y * TILE_Y + toffset / TILE_X;
+		uint32_t fb_index = y * args.framebuffer_width + x;
+		rtm::RNG rng(fb_index);
 
-		uint tile_x = tile_id % (args.framebuffer_width / TILE_WIDTH);
-		uint tile_y = tile_id / (args.framebuffer_width / TILE_WIDTH);
+		float radiance = 0.0f;
+		for(uint i = 0; i < SPP; ++i)
+		{
+			float throughput = 1.0f;
+			rtm::Ray ray = args.camera.generate_ray_through_pixel(x, y);
 
-		uint x = tile_x * TILE_WIDTH + toffset % TILE_WIDTH;
-		uint y = tile_y * TILE_HEIGHT + toffset / TILE_WIDTH;
-
-		uint fb_index = y * fb_width + x;
-
-		// 1. Trace ray
-		rtm::Ray ray = args.camera.generate_ray_through_pixel(x, y);
-		rtm::Hit hit;
-		hit.t = ray.t_max;
-		hit.bc = rtm::vec2(0.0f);
-		hit.id = ~0U;
-		_traceray<0x0U>(0, ray, hit);
-
-		// 2. Hit shader
-		uint mat_id = uint(-1);
-		if (hit.t < ray.t_max) {
-			mat_id = args.material_indices[hit.id];
-
-			if (mat_id != uint(-1))
+			// compute ambient occlusion
+			for(uint j = 0; j < 3; ++j)
 			{
-				rtm::Material& mat = args.materials[mat_id];
+				rtm::Hit hit(ray.t_max, rtm::vec2(0.0f), ~0u);
+				_traceray<0x0u>(index, ray, hit);
 
-				rtm::vec4 albedo = rtm::vec4(1.0f, 0.0f, 1.0f, 1.0f);
-				if (mat.use_am)
+				if(hit.t >= ray.t_max)
 				{
-					// Find barycentrics (only valid when the mesh has UVs)
-					rtm::uvec3 tci = args.tex_coord_indices[hit.id];
-					rtm::vec2 uv =
-						args.tex_coords[tci[0]] * hit.bc[0] +
-						args.tex_coords[tci[1]] * hit.bc[1] +
-						args.tex_coords[tci[2]] * (1.0f - hit.bc[0] - hit.bc[1]);
+					radiance += throughput * 2.0f;
+					break;
+				}
 
-					albedo = sample2d(&mat.albedo_texture, uv);
-				}
-				else {
-					// (No swizzling supported?)
-					albedo = rtm::vec4(mat.albedo.x, mat.albedo.y, mat.albedo.z, 1.0f);
-				}
-				args.framebuffer[fb_index] = pack_color_rgba(albedo);
-			}
-			else {
-				rtm::vec3 magenta = rtm::vec3(1.0f, 0.0f, 1.0f);
-				args.framebuffer[fb_index] = pack_color_rgb(magenta);
+				rtm::uvec3 ni = args.normal_indices[hit.id];
+				rtm::vec3 n0 = args.normals[ni[0]];
+				rtm::vec3 n1 = args.normals[ni[1]];
+				rtm::vec3 n2 = args.normals[ni[2]];
+				rtm::vec3 n =
+					(n0 * hit.bc.x) +
+					(n1 * hit.bc.y) +
+					n2 * (1.0f - hit.bc.x - hit.bc.y);
+
+				// generate secondary rays
+				ray.o += ray.d * hit.t;
+				ray.d = cosine_sample_hemisphere(n, rng);
+				throughput *= 0.8f;
 			}
 		}
-		// 3. Miss shader
-		else {
-			rtm::vec3 sky_color = rtm::vec3(0.5f, 0.7f, 1.0f);
-			args.framebuffer[fb_index] = pack_color_rgb(sky_color);
-		}
+
+		args.framebuffer[fb_index] = encode_pixel(radiance / SPP);
 	}
+
 	return 0;
 }

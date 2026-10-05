@@ -41,4 +41,7 @@ struct TRaXKernelArgs
 
 	uint* material_indices;
 	rtm::Material* materials;
+
+	rtm::Sphere* spheres; // pointer to sphere data in the device memory
+	uint32_t sphere_count;
 };

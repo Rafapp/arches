@@ -15,6 +15,7 @@
 #include "ray.hpp"
 #include "aabb.hpp"
 #include "triangle.hpp"
+#include "sphere.hpp"
 
 #include "rng.hpp"
 #include "sampling.hpp"

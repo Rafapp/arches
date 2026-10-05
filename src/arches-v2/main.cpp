@@ -3,6 +3,7 @@
 #include "shared-utils.hpp"
 #include "units/trax/unit-tp.hpp"
 #include "units/trax/unit-rt-core.hpp"
+#include "units/trax/unit-sphere-intersection.hpp"
 #include "trax-kernel/include.hpp"
 #include "trax-kernel/intersect.hpp"
 #include "units/unit-texture.hpp"
@@ -146,6 +147,30 @@ const static InstructionInfo isa_custom0_funct3[8] =
 
 		return mem_req;
 	}),
+	InstructionInfo(0x7, "sphisect", InstrType::CUSTOM5, Encoding::I, RegFile::FLOAT, MEM_REQ_DECL
+	{
+		Register32* fr = unit->float_regs->registers;
+
+		// upon issuing this instruction, a thread should send a processing request
+		// to the sphere intersection unit. Because all units are memory-mapped,
+		// this processing request is just a memory store operation
+		MemoryRequest mem_req;
+		mem_req.type = MemoryRequest::Type::STORE;
+
+		// populate operands excluding vaddr (i.e. our single ray)
+		mem_req.size = sizeof(rtm::Ray);
+		for(int i = 0; i < sizeof(rtm::Ray) / sizeof(float); ++i)
+			((float*)mem_req.data)[i] = fr[instr.rs1 + i].f32;
+
+		// set device memory address of the sphere (read as u32, not f32)
+		mem_req.vaddr = fr[instr.i.rs1 + 8].u32;
+
+		// destination register should be rd (whatever compiler allocated for t)
+		mem_req.dst.push(DstReg(instr.i.rd, RegType::FLOAT32).u9, 9);
+
+		// at the end of this cycle, this thread generated 1 memory request
+		return mem_req;
+	}),
 };
 
 const static InstructionInfo custom0(CUSTOM_OPCODE0, META_DECL{return isa_custom0_funct3[instr.i.funct3]; });
@@ -162,6 +187,7 @@ typedef Units::UnitCache UnitL2Cache;
 typedef Units::UnitCache UnitL1Cache;
 typedef rtm::FTB PrimBlocks;
 typedef Units::TRaX::UnitRTCore<rtm::CWBVH::Node, PrimBlocks> UnitRTCore;
+typedef Units::TRaX::UnitSphereIntersection UnitSphereIntersection;
 
 static TRaXKernelArgs initilize_buffers(Units::UnitMainMemoryBase** drams, const Units::UnitCrossbar& xbar, paddr_t& heap_address, const SimulationConfig& sim_config, uint page_size)
 {
@@ -184,57 +210,20 @@ static TRaXKernelArgs initilize_buffers(Units::UnitMainMemoryBase** drams, const
 	args.light_dir = rtm::normalize(rtm::vec3(4.5f, 42.5f, 5.0f));
 	args.camera = sim_config.camera;
 
-	rtm::Mesh mesh(datasets_folder + scene_name + ".obj");
-	rtm::CWBVH bvh(mesh, (cache_folder + scene_name + ".bvh").c_str(), sim_config.get_int("bvh-preset"), sim_config.get_int("bvh-merging"));
+	// initialize spheres
+	rtm::Sphere spheres[3];
+	spheres[0].center = rtm::vec3(-1.5f, -1.0f, 0.0f);
+	spheres[0].radius = 2.0f;
+	spheres[1].center = rtm::vec3(0.0f, 1.0f, 0.0f);
+	spheres[1].radius = 1.0f;
+	spheres[2].center = rtm::vec3(1.5f, -1.0f, 0.0f);
+	spheres[2].radius = 1.0f;
 
-	std::vector<rtm::Ray> rays(args.framebuffer_size);
-	if(args.pregen_rays)
-	{
-		std::string ray_file = scene_name + "-" + std::to_string(args.framebuffer_width) + "-" + std::to_string(pregen_bounce) + ".rays";
-	#if USE_HECWBVH_V1
-		pregen_rays(&bvh.nodes[0], &bvh.nodes[0].ftb, mesh, args.framebuffer_width, args.framebuffer_height, args.camera, pregen_bounce, rays);
-	#else
-		pregen_rays(&bvh.nodes[0], &bvh.ftbs[0], mesh, args.framebuffer_width, args.framebuffer_height, args.camera, pregen_bounce, rays);
-	#endif
-		args.rays = write_vector(drams, xbar, 256, rays, heap_address);
-	}
+	// copy the spheres into device memory and save ptr into kernel args
+	args.sphere_count = sizeof(spheres) / sizeof(rtm::Sphere);
+	args.spheres = write_array(drams, xbar, 256, spheres, args.sphere_count, heap_address);
 
-	args.materials = write_vector(drams, xbar, 256, mesh.materials, heap_address);
-
-	args.nodes = write_vector(drams, xbar, 256, bvh.nodes, heap_address);
-
-#if USE_HECWBVH_V1
-	args.ftbs = (rtm::FTB*)args.nodes;
-#else 
-	args.ft_blocks = write_vector(drams, xbar, 256, bvh.ftbs, heap_address);
-#endif
-
-	args.vertex_indices = write_vector(drams, xbar, 256, mesh.vertex_indices, heap_address);
-	args.normal_indices = write_vector(drams, xbar, 256, mesh.normal_indices, heap_address);
-	args.tex_coord_indices = write_vector(drams, xbar, 256, mesh.tex_coord_indices, heap_address);
-
-	args.vertices = write_vector(drams, xbar, 256, mesh.vertices, heap_address);
-	args.normals = write_vector(drams, xbar, 256, mesh.normals, heap_address);
-	args.tex_coords = write_vector(drams, xbar, 256, mesh.tex_coords, heap_address);
-
-	args.material_indices = write_vector(drams, xbar, 256, mesh.material_indices, heap_address);
-
-	for(uint32_t i = 0; i < mesh.materials.size(); ++i)
-	{
-		if(!mesh.materials[i].use_am)
-			continue;
-		Texture2D& tex = mesh.materials[i].albedo_texture;
-		Texture2D::Texel* dev_tex = write_array(drams, xbar, 256, tex.texels, tex.width * tex.height, heap_address);
-		free(tex.texels);
-		tex.texels = dev_tex;
-	}
-
-	paddr_t mat_addr = (paddr_t)args.materials;
-	args.materials = write_vector(drams, xbar, 256, mesh.materials, mat_addr);
-
-	for(uint32_t i = 0; i < mesh.materials.size(); ++i)
-		mesh.materials[i].albedo_texture.texels = nullptr;  // to not free device memory textures
-
+	// copy kernel args into device memory
 	size_t temp = TRAX_KERNEL_ARGS_ADDRESS;
 	write_array(drams, xbar, 256, (uint8_t*)&args, sizeof(TRaXKernelArgs), temp);
 	return args;
@@ -512,6 +501,7 @@ static void run_sim_trax(SimulationConfig& sim_config)
 	ISA::RISCV::InstructionTypeNameDatabase::get_instance()[ISA::RISCV::InstrType::CUSTOM2] = "TRIISECT";
 	ISA::RISCV::InstructionTypeNameDatabase::get_instance()[ISA::RISCV::InstrType::CUSTOM3] = "SAMPLE2D";
 	ISA::RISCV::InstructionTypeNameDatabase::get_instance()[ISA::RISCV::InstrType::CUSTOM4] = "BARYINT3";
+	ISA::RISCV::InstructionTypeNameDatabase::get_instance()[ISA::RISCV::InstrType::CUSTOM5] = "SPHISECT";
 	ISA::RISCV::InstructionTypeNameDatabase::get_instance()[ISA::RISCV::InstrType::CUSTOM7] = "TRACERAY";
 	ISA::RISCV::isa[ISA::RISCV::CUSTOM_OPCODE0] = ISA::RISCV::TRaX::custom0;
 
@@ -523,6 +513,14 @@ static void run_sim_trax(SimulationConfig& sim_config)
 	std::vector<Units::UnitThreadScheduler*> thread_schedulers;
 	std::vector<UnitRTCore*> rtcs;
 	std::vector<Units::UnitTexture*> tus;
+	std::vector<UnitSphereIntersection*> sphus;
+
+	UnitSphereIntersection::Configuration sphu_config;
+	sphu_config.num_pipelines = 4;
+	sphu_config.pipeline_depth = 44;
+	sphu_config.cpi = 1;
+	sphu_config.num_clients = num_tps;
+
 	std::vector<UnitL1Cache*> l1ds;
 	std::vector<std::vector<Units::UnitBase*>> unit_tables; unit_tables.reserve(num_tms);
 	std::vector<std::vector<Units::UnitSFU*>> sfu_lists; sfu_lists.reserve(num_tms);
@@ -677,6 +675,16 @@ static void run_sim_trax(SimulationConfig& sim_config)
 		unit_table[(uint)ISA::RISCV::InstrType::CUSTOM7] = rtcs.back();
 	#endif
 
+		// add sphere intersection units
+		sphu_config.cache = l1ds.back();
+		sphu_config.cache_port = num_tps + 2;
+
+		sphus.push_back(_new UnitSphereIntersection(sphu_config));
+		simulator.register_unit(sphus.back());
+		mem_list.push_back(sphus.back());
+		unit_table[(uint)ISA::RISCV::InstrType::CUSTOM5] = sphus.back();
+
+
 		unit_tables.emplace_back(unit_table);
 		sfu_lists.emplace_back(sfu_list);
 		mem_lists.emplace_back(mem_list);
@@ -712,6 +720,7 @@ static void run_sim_trax(SimulationConfig& sim_config)
 
 	UnitRTCore::Log rtc_log;
 	Units::UnitTexture::Log tu_log;
+	UnitSphereIntersection::Log sphu_log;
 
 	uint delta = sim_config.get_int("logging-interval");
 	float delta_s = delta / core_clock;
@@ -734,6 +743,7 @@ static void run_sim_trax(SimulationConfig& sim_config)
 		UnitL1Cache::Log l1d_delta_log = delta_log(l1d_log, l1ds);
 		UnitRTCore::Log rtc_delta_log = delta_log(rtc_log, rtcs);
 		Units::UnitTexture::Log tu_delta_log = delta_log(tu_log, tus);
+		UnitSphereIntersection::Log sphu_delta_log = delta_log(sphu_log, sphus);
 
 		double simulation_time = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - start).count() / 1000.0;
 
@@ -761,6 +771,7 @@ static void run_sim_trax(SimulationConfig& sim_config)
 		printf("                            \n");
 		
 		tu_delta_log.print(delta, tus.size());
+		sphu_delta_log.print(delta);
 		
 		if(!rtcs.empty())
 		{
@@ -818,6 +829,10 @@ static void run_sim_trax(SimulationConfig& sim_config)
 	delta_log(tu_log, tus);
 	tu_log.print(frame_cycles, tus.size());
 
+	print_header("Sphere Intersection Unit");
+	delta_log(sphu_log, sphus);
+	sphu_log.print(frame_cycles);
+
 	print_header("TP");
 	delta_log(tp_log, tps);
 	tp_log.print(tps.size());
@@ -857,6 +872,7 @@ static void run_sim_trax(SimulationConfig& sim_config)
 	for(auto& l1d : l1ds) delete l1d;
 	for(auto& thread_scheduler : thread_schedulers) delete thread_scheduler;
 	for(auto& rtc : rtcs) delete rtc;
+	for(auto& sphu : sphus) delete sphu;
 	for(auto& l2 : l2s) delete l2;
 	for(auto& l3 : l3s) delete l3;
 	for(auto& dram : drams) delete dram;

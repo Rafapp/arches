@@ -3,6 +3,7 @@
 #include "ray.hpp"
 #include "aabb.hpp"
 #include "triangle.hpp"
+#include "sphere.hpp"
 #include "vec2.hpp"
 
 namespace rtm
@@ -71,6 +72,34 @@ inline bool intersect(const rtm::Triangle& tri, const rtm::Ray& ray, rtm::Hit& h
 	hit.t = t;
 	return true;
 #endif
+}
+
+inline bool intersect(const rtm::Sphere& sphere, const rtm::Ray& ray, rtm::Hit& hit)
+{
+	rtm::vec3 oc = ray.o - sphere.center;
+	float a = rtm::dot(ray.d, ray.d);
+	float b = 2.0f * rtm::dot(ray.d, oc);
+	float c = rtm::dot(oc, oc) - sphere.radius * sphere.radius;
+
+	float discriminant = b * b - 4 * a * c;
+	if (discriminant < 0.0f) return false;
+
+	float sqrt_discriminant = sqrt(discriminant);
+	float ainv = 1.0f / (2.0f * a); 
+
+	float t0 = (-b - sqrt_discriminant) * ainv;
+	float t1 = (-b + sqrt_discriminant) * ainv;
+
+	if (t0 > ray.t_min && t0 < hit.t) {
+		hit.t = t0;
+		return true;
+	}
+	if (t1 > ray.t_min && t1 < hit.t) {
+		hit.t = t1;
+		return true;
+	}
+
+	return false;
 }
 
 }

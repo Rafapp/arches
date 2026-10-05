@@ -49,6 +49,16 @@ private:
 				if(float_regs_pending[i])
 					return float_regs_pending[i];
 		}
+		else if(instr_info.instr_type == ISA::RISCV::InstrType::CUSTOM5) //SPHISECT
+		{
+			//8 ray operands + the sphere address
+			for(uint i = 0; i < sizeof(rtm::Ray) / sizeof(float) + 1; ++i)
+				if(float_regs_pending[instr.rs1 + i])
+					return float_regs_pending[instr.rs1 + i];
+
+			if(float_regs_pending[instr.rd])
+				return float_regs_pending[instr.rd];
+		}
 		else if(instr_info.instr_type == ISA::RISCV::InstrType::CUSTOM7) //TRACE RAY
 		{
 			for(uint i = 0; i < sizeof(rtm::Ray) / sizeof(float); ++i)
@@ -80,6 +90,10 @@ private:
 			//for(uint i = 0; i < sizeof(rtm::Hit) / sizeof(float); ++i)
 			//	float_regs_pending[instr.rd + i] = (uint8_t)ISA::RISCV::InstrType::CUSTOM2;
 			float_regs_pending[instr.rd] = (uint8_t)ISA::RISCV::InstrType::CUSTOM2;
+		}
+		else if(instr_info.instr_type == ISA::RISCV::InstrType::CUSTOM5) //SPHISECT
+		{
+			float_regs_pending[instr.rd] = (uint8_t)ISA::RISCV::InstrType::CUSTOM5;
 		}
 		else if(instr_info.instr_type == ISA::RISCV::InstrType::CUSTOM7) //TRACE RAY
 		{

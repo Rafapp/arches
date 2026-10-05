@@ -153,6 +153,8 @@ const static std::vector<SceneConfig> scene_configs =
 	{"triangle", rtm::vec3(0.0, 0.0, 5.0), rtm::vec3(0.0f, 0.0f, 0.0f), 24.0f}, //TRIANGLE
 	
 	{"teapot", rtm::vec3(0.0, 0.0, 5.0), rtm::vec3(0.0f, 0.0f, 0.0f), 24.0f}, //TEAPOT
+	
+	{"spheres", rtm::vec3(0.0, 0.0, 5.0), rtm::vec3(0.0f, 0.0f, 0.0f), 24.0f}, //SPHERES
 };
 
 

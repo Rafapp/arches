@@ -228,7 +228,15 @@ static void run_sim_trax(SimulationConfig& sim_config)
 {
 	std::string project_folder_path = get_project_folder_path();
 
-	//Hardware parameters are read from the hardware file (src/arches-v2/hardware.cfg) or the command line
+	//Hardware parameters are read from the hardware file (src/arches-v2/hardware/*.yaml) or the command line
+	const std::vector<std::string> policy_names = {"LRU", "LRU_RANDOM", "FIFO", "FIFO_RANDOM"};
+	auto get_policy = [&](const std::string& key)
+	{
+		size_t policy = std::find(policy_names.begin(), policy_names.end(), sim_config.get_string(key)) - policy_names.begin();
+		_assert(policy < policy_names.size());
+		return (Units::UnitCacheBase::Policy)policy;
+	};
+
 	double core_clock = sim_config.get_int("core-clock-mhz") * 1.0e6;
 	double dram_clock = sim_config.get_int("dram-clock-mhz") * 1.0e6;
 	uint num_threads = sim_config.get_int("num-threads");
@@ -248,7 +256,9 @@ static void run_sim_trax(SimulationConfig& sim_config)
 	//L2$
 	UnitL2Cache::Configuration l2_config;
 	l2_config.level = 2;
-	l2_config.miss_alloc = true;
+	l2_config.miss_alloc = sim_config.get_int("l2-miss-alloc");
+	l2_config.block_prefetch = sim_config.get_int("l2-block-prefetch");
+	l2_config.policy = get_policy("l2-policy");
 	l2_config.size = sim_config.get_int("l2-size-kb") << 10;
 	l2_config.associativity = sim_config.get_int("l2-associativity");
 	l2_config.num_slices = sim_config.get_int("l2-slices");
@@ -268,7 +278,8 @@ static void run_sim_trax(SimulationConfig& sim_config)
 	//L1d$
 	UnitL1Cache::Configuration l1d_config;
 	l1d_config.level = 1;
-	l1d_config.miss_alloc = true;
+	l1d_config.miss_alloc = sim_config.get_int("l1d-miss-alloc");
+	l1d_config.policy = get_policy("l1d-policy");
 	l1d_config.size = sim_config.get_int("l1d-size-kb") << 10;
 	l1d_config.associativity = sim_config.get_int("l1d-associativity");
 	l1d_config.num_banks = sim_config.get_int("l1d-banks");

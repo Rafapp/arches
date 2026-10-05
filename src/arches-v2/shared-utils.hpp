@@ -1,6 +1,7 @@
 #pragma once
 #include "stdafx.hpp"
 #include <fstream>
+#include <yaml-cpp/yaml.h>
 
 #include "simulator/simulator.hpp"
 
@@ -225,7 +226,7 @@ public:
 		set_param("max-rays", 64);
 
 		//Hardware (defaults are RTX 2080, overridden by the hardware file and then by the command line)
-		set_param("hardware", get_project_folder_path() + "src/arches-v2/hardware.cfg");
+		set_param("hardware", "rtx-2080.yaml");
 		set_param("core-clock-mhz", 1515);
 		set_param("dram-clock-mhz", 3500);
 		set_param("num-tms", 46);
@@ -241,12 +242,17 @@ public:
 		set_param("l2-mshr", 192);
 		set_param("l2-subentries", 4);
 		set_param("l2-latency", 160);
+		set_param("l2-miss-alloc", 1);
+		set_param("l2-block-prefetch", 0);
+		set_param("l2-policy", "LRU");
 		set_param("l1d-size-kb", 64);
 		set_param("l1d-associativity", 32);
 		set_param("l1d-banks", 16);
 		set_param("l1d-mshr", 256);
 		set_param("l1d-subentries", 16);
 		set_param("l1d-latency", 20);
+		set_param("l1d-miss-alloc", 1);
+		set_param("l1d-policy", "LRU");
 
 		//Workload
 		set_param("dataset-dir", "./datasets");
@@ -282,18 +288,21 @@ public:
 		}
 	}
 
-	//one "key = value" per line, # starts a comment
+	//a yaml map of params, path is a file or the name of one in src/arches-v2/hardware
 	void parse_file(const std::string& path)
 	{
-		std::ifstream file(path);
-		for(std::string line; std::getline(file, line);)
+		bool found = std::ifstream(path).good();
+		YAML::Node config = YAML::LoadFile(found ? path : get_project_folder_path() + "src/arches-v2/hardware/" + path);
+		for(const auto& entry : config)
 		{
-			line = line.substr(0, line.find('#'));
-			line.erase(std::remove_if(line.begin(), line.end(), ::isspace), line.end());
-			size_t split_pos = line.find("=");
-			if(split_pos == std::string::npos) continue;
+			std::string value;
+			if(entry.second.IsSequence())
+				for(const auto& element : entry.second)
+					value += (value.empty() ? "" : ",") + element.as<std::string>();
+			else
+				value = entry.second.as<std::string>();
 
-			parse_param(line.substr(0, split_pos), line.substr(split_pos + 1));
+			parse_param(entry.first.as<std::string>(), value);
 		}
 	}
 
@@ -376,7 +385,7 @@ public:
 		_params[key].s = std::string(value);
 	}
 
-	//a comma separated list (e.g. 1,2,4,8) sweeps the param
+	//a comma separated list (e.g. 1,2,4,8, or a yaml list in the hardware file) sweeps the param
 	void parse_param(const std::string& key, const std::string& str)
 	{
 		std::erase_if(_sweeps, [&](const auto& sweep) { return sweep.first == key; });

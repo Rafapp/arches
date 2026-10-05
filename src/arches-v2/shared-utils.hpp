@@ -1,6 +1,5 @@
 #pragma once
 #include "stdafx.hpp"
-#include <fstream>
 #include <yaml-cpp/yaml.h>
 
 #include "simulator/simulator.hpp"
@@ -223,36 +222,7 @@ public:
 
 		//Arch
 		set_param("arch-name", "TRaX");
-		set_param("max-rays", 64);
-
-		//Hardware (defaults are RTX 2080, overridden by the hardware file and then by the command line)
-		set_param("hardware", "rtx-2080.yaml");
-		set_param("core-clock-mhz", 1515);
-		set_param("dram-clock-mhz", 3500);
-		set_param("num-tms", 46);
-		set_param("num-tps", 64);
-		set_param("num-threads", 8);
-		set_param("stack-size", 1024);
-		set_param("num-partitions", 8);
-		set_param("dram-config", "gddr6_14000_config.yaml");
-		set_param("dram-latency", 92);
-		set_param("l2-size-kb", 512);
-		set_param("l2-associativity", 16);
-		set_param("l2-slices", 4);
-		set_param("l2-mshr", 192);
-		set_param("l2-subentries", 4);
-		set_param("l2-latency", 160);
-		set_param("l2-miss-alloc", 1);
-		set_param("l2-block-prefetch", 0);
-		set_param("l2-policy", "LRU");
-		set_param("l1d-size-kb", 64);
-		set_param("l1d-associativity", 32);
-		set_param("l1d-banks", 16);
-		set_param("l1d-mshr", 256);
-		set_param("l1d-subentries", 16);
-		set_param("l1d-latency", 20);
-		set_param("l1d-miss-alloc", 1);
-		set_param("l1d-policy", "LRU");
+		set_param("max-rays", 128);
 
 		//Workload
 		set_param("dataset-dir", "./datasets");
@@ -264,13 +234,9 @@ public:
 		set_param("bvh-preset", 0);
 		set_param("bvh-merging", 0);
 
-		parse_args(argc, argv); //only to find --hardware
-		parse_file(get_string("hardware"));
-		parse_args(argc, argv);
-	}
+		//Hardware
+		parse_file(get_project_folder_path() + "src/arches-v2/hardware/example.yaml");
 
-	void parse_args(int argc, char* argv[])
-	{
 		for(uint i = 1; i < argc; ++i)
 		{
 			std::string arg(argv[i]);
@@ -285,24 +251,6 @@ public:
 			std::string value = arg.substr(split_pos, arg.size() - split_pos);
 
 			parse_param(key, value);
-		}
-	}
-
-	//a yaml map of params, path is a file or the name of one in src/arches-v2/hardware
-	void parse_file(const std::string& path)
-	{
-		bool found = std::ifstream(path).good();
-		YAML::Node config = YAML::LoadFile(found ? path : get_project_folder_path() + "src/arches-v2/hardware/" + path);
-		for(const auto& entry : config)
-		{
-			std::string value;
-			if(entry.second.IsSequence())
-				for(const auto& element : entry.second)
-					value += (value.empty() ? "" : ",") + element.as<std::string>();
-			else
-				value = entry.second.as<std::string>();
-
-			parse_param(entry.first.as<std::string>(), value);
 		}
 	}
 
@@ -383,6 +331,26 @@ public:
 	{
 		_params[key].type = Param::Type::STRING;
 		_params[key].s = std::string(value);
+	}
+
+	//a yaml map of params, a value that starts with a digit is an int
+	void parse_file(const std::string& path)
+	{
+		YAML::Node config = YAML::LoadFile(path);
+		for(const auto& entry : config)
+		{
+			std::string value;
+			if(entry.second.IsSequence())
+				for(const auto& element : entry.second)
+					value += (value.empty() ? "" : ",") + element.as<std::string>();
+			else
+				value = entry.second.as<std::string>();
+
+			std::string key = entry.first.as<std::string>();
+			if(isdigit(value[0])) set_param(key, 0);
+			else                  set_param(key, value);
+			parse_param(key, value);
+		}
 	}
 
 	//a comma separated list (e.g. 1,2,4,8, or a yaml list in the hardware file) sweeps the param

@@ -1,12 +1,12 @@
 # RTX 2080 (Turing)
-# Select with --hardware=rtx-2080.yaml, see example.yaml for what each parameter means.
+# Copy over example.yaml to use, see that file for what each parameter means.
 core-clock-mhz: 1515
 dram-clock-mhz: 3500
 num-tms: 46
 num-tps: 64
 num-threads: 8
 stack-size: 1024
-max-rays: 64
+rtc-max-rays: 64
 
 # DRAM (dram-config is a file in units/ramulator/config-files)
 num-partitions: 8

@@ -1,13 +1,10 @@
-# Example hardware description for arches-v2. Copy this file to start a new
-# architecture. The values below are the RTX 2080 preset (rtx-2080.yaml).
+# Hardware description for arches-v2. This is the file the simulator reads at
+# startup, so editing it needs no rebuild. The values below are the RTX 2080
+# preset; the other presets in this folder can be copied over it. Every key
+# below is required.
 #
-# Usage
-#   arches-v2 --hardware=example.yaml      a name in this folder, or any path
-#   arches-v2 --num-tms=32                 any key also works on the command line
-#
-# The file is read at startup, so editing it needs no rebuild. Priority is
-# built-in defaults (RTX 2080) < this file < command line, so a file only has
-# to list the parameters it changes.
+# Any key also works on the command line and takes priority over this file:
+#   arches-v2 --num-tms=32
 #
 # Sweeps
 #   Give a list instead of a single value to sweep a parameter. The simulation
@@ -24,7 +21,7 @@ num-tms: 46               # thread multiprocessors, each has its own L1d$, RT co
 num-tps: 64               # thread processors per TM (at least 16, SFU counts are derived from it)
 num-threads: 8            # threads per TP
 stack-size: 1024          # stack bytes per thread (power of two)
-max-rays: 64              # rays the RT core of a TM holds at once
+rtc-max-rays: 64          # rays the RT core of a TM holds at once
 
 # ----------------------------------- DRAM ------------------------------------
 dram-clock-mhz: 3500      # DRAM clock, simulated relative to the core clock

@@ -1,12 +1,12 @@
 # RTX 4090 ish
-# Select with --hardware=rtx-4090.yaml, see example.yaml for what each parameter means.
+# Copy over example.yaml to use, see that file for what each parameter means.
 core-clock-mhz: 2235
 dram-clock-mhz: 5250
 num-tms: 128
 num-tps: 128
 num-threads: 12
 stack-size: 512
-max-rays: 64
+rtc-max-rays: 64
 
 # DRAM (dram-config is a file in units/ramulator/config-files)
 num-partitions: 12

@@ -228,7 +228,7 @@ static void run_sim_trax(SimulationConfig& sim_config)
 {
 	std::string project_folder_path = get_project_folder_path();
 
-	//Hardware parameters are read from the hardware file (src/arches-v2/hardware/*.yaml) or the command line
+	//Hardware parameters are read from src/arches-v2/hardware/example.yaml or the command line
 	const std::vector<std::string> policy_names = {"LRU", "LRU_RANDOM", "FIFO", "FIFO_RANDOM"};
 	auto get_policy = [&](const std::string& key)
 	{
@@ -293,7 +293,7 @@ static void run_sim_trax(SimulationConfig& sim_config)
 	Units::UnitTexture::Configuration tu_config;
 
 	UnitRTCore::Configuration rtc_config;
-	rtc_config.max_rays = sim_config.get_int("max-rays");
+	rtc_config.max_rays = sim_config.get_int("rtc-max-rays");
 	rtc_config.num_cache_ports = 4;
 
 	ELF elf(project_folder_path + "src/trax-kernel/riscv/kernel");

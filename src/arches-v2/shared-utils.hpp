@@ -1,5 +1,6 @@
 #pragma once
 #include "stdafx.hpp"
+#include <fstream>
 
 #include "simulator/simulator.hpp"
 
@@ -210,6 +211,8 @@ public:
 
 private:
 	std::map<std::string, Param> _params;
+	std::vector<std::pair<std::string, std::vector<std::string>>> _sweeps; //params with a list of values, one run per combination
+	uint _run{0};
 
 public:
 	SimulationConfig(int argc, char* argv[])
@@ -219,7 +222,31 @@ public:
 
 		//Arch
 		set_param("arch-name", "TRaX");
-		set_param("max-rays", 128);
+		set_param("max-rays", 64);
+
+		//Hardware (defaults are RTX 2080, overridden by the hardware file and then by the command line)
+		set_param("hardware", get_project_folder_path() + "src/arches-v2/hardware.cfg");
+		set_param("core-clock-mhz", 1515);
+		set_param("dram-clock-mhz", 3500);
+		set_param("num-tms", 46);
+		set_param("num-tps", 64);
+		set_param("num-threads", 8);
+		set_param("stack-size", 1024);
+		set_param("num-partitions", 8);
+		set_param("dram-config", "gddr6_14000_config.yaml");
+		set_param("dram-latency", 92);
+		set_param("l2-size-kb", 512);
+		set_param("l2-associativity", 16);
+		set_param("l2-slices", 4);
+		set_param("l2-mshr", 192);
+		set_param("l2-subentries", 4);
+		set_param("l2-latency", 160);
+		set_param("l1d-size-kb", 64);
+		set_param("l1d-associativity", 32);
+		set_param("l1d-banks", 16);
+		set_param("l1d-mshr", 256);
+		set_param("l1d-subentries", 16);
+		set_param("l1d-latency", 20);
 
 		//Workload
 		set_param("dataset-dir", "./datasets");
@@ -231,6 +258,13 @@ public:
 		set_param("bvh-preset", 0);
 		set_param("bvh-merging", 0);
 
+		parse_args(argc, argv); //only to find --hardware
+		parse_file(get_string("hardware"));
+		parse_args(argc, argv);
+	}
+
+	void parse_args(int argc, char* argv[])
+	{
 		for(uint i = 1; i < argc; ++i)
 		{
 			std::string arg(argv[i]);
@@ -246,6 +280,38 @@ public:
 
 			parse_param(key, value);
 		}
+	}
+
+	//one "key = value" per line, # starts a comment
+	void parse_file(const std::string& path)
+	{
+		std::ifstream file(path);
+		for(std::string line; std::getline(file, line);)
+		{
+			line = line.substr(0, line.find('#'));
+			line.erase(std::remove_if(line.begin(), line.end(), ::isspace), line.end());
+			size_t split_pos = line.find("=");
+			if(split_pos == std::string::npos) continue;
+
+			parse_param(line.substr(0, split_pos), line.substr(split_pos + 1));
+		}
+	}
+
+	//applies the next combination of swept params, returns false once all of them have been run
+	bool next_run()
+	{
+		uint num_runs = 1;
+		for(auto& sweep : _sweeps) num_runs *= sweep.second.size();
+		if(_run >= num_runs) return false;
+
+		uint index = _run;
+		for(auto& sweep : _sweeps)
+		{
+			set_value(sweep.first, sweep.second[index % sweep.second.size()]);
+			index /= sweep.second.size();
+		}
+		set_param("image-name", num_runs > 1 ? "out-" + std::to_string(_run) + ".png" : std::string("out.png"));
+		_run++;
 
 		set_param("arch-id", -1);
 		for(int i = 0; i < arch_names.size(); ++i)
@@ -263,6 +329,7 @@ public:
 		camera = rtm::Camera(get_int("framebuffer-width"), get_int("framebuffer-height"), scene_configs[scene_id].focal_length, scene_configs[scene_id].cam_pos, scene_configs[scene_id].cam_target);
 
 		print();
+		return true;
 	}
 
 	int get_int(const std::string& key) const
@@ -309,7 +376,24 @@ public:
 		_params[key].s = std::string(value);
 	}
 
+	//a comma separated list (e.g. 1,2,4,8) sweeps the param
 	void parse_param(const std::string& key, const std::string& str)
+	{
+		std::erase_if(_sweeps, [&](const auto& sweep) { return sweep.first == key; });
+		if(_params.count(key) && str.find(',') != std::string::npos)
+		{
+			std::vector<std::string> values;
+			for(size_t pos = 0, end; pos <= str.size(); pos = end + 1)
+			{
+				end = std::min(str.find(',', pos), str.size());
+				values.push_back(str.substr(pos, end - pos));
+			}
+			_sweeps.push_back({key, values});
+		}
+		else set_value(key, str);
+	}
+
+	void set_value(const std::string& key, const std::string& str)
 	{
 		if(_params.count(key))
 		{
